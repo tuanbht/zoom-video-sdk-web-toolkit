@@ -1,5 +1,5 @@
 // @ts-nocheck
-import { useState, useCallback, useContext, useEffect, MutableRefObject } from 'react';
+import { useState, useCallback, useContext, useEffect } from 'react';
 import classNames from 'classnames';
 import { message } from 'antd';
 import ZoomContext from '../../../context/zoom-context';
@@ -33,6 +33,8 @@ import IsoRecordingModal from './recording-ask-modal';
 import { LiveStreamButton, LiveStreamModal } from './live-stream';
 import { IconFont } from '../../../component/icon-font';
 import { VideoMaskModel } from './video-mask-modal';
+import { buildCallsDashboardPath } from '../../../constants/route-paths';
+import { useJoinSessionParams } from '../../../utils/util';
 interface VideoFooterProps {
   className?: string;
   selfShareCanvas?: HTMLCanvasElement | HTMLVideoElement | null;
@@ -41,7 +43,10 @@ interface VideoFooterProps {
 
 const isAudioEnable = typeof AudioWorklet === 'function';
 const VideoFooter = (props: VideoFooterProps) => {
+  const { siteSlug } = useJoinSessionParams();
+
   const { className, selfShareCanvas, sharing } = props;
+
   const zmClient = useContext(ZoomContext);
   const { mediaStream } = useContext(ZoomMediaContext);
   const liveTranscriptionClient = zmClient.getLiveTranscriptionClient();
@@ -255,10 +260,12 @@ const VideoFooter = (props: VideoFooterProps) => {
 
   const onLeaveClick = useCallback(async () => {
     await zmClient.leave();
+    window.location.assign(buildCallsDashboardPath(siteSlug));
   }, [zmClient]);
 
   const onEndClick = useCallback(async () => {
     await zmClient.leave(true);
+    window.location.assign(buildCallsDashboardPath(siteSlug));
   }, [zmClient]);
 
   const onPassivelyStopShare = useCallback(({ reason }) => {

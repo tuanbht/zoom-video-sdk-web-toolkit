@@ -12,8 +12,12 @@ import ZoomMediaContext from './context/media-context';
 import LoadingLayer from './component/loading-layer';
 import { MediaStream } from './index-types';
 import './App.css';
-import { matchPath } from 'react-router-dom';
 import AxiosClient from './config/api-client';
+import { buildCallsDashboardPath } from './constants/route-paths';
+import { buildApiJoinSession } from './constants/api-paths';
+import get from 'lodash/get';
+import { isEmpty } from 'lodash';
+import { useJoinSessionParams } from './utils/util';
 
 interface AppProps {
   meetingArgs: {
@@ -88,17 +92,8 @@ declare global {
 }
 
 function App(props: AppProps) {
-  const {
-    sdkKey,
-    topic,
-    signature,
-    name,
-    password,
-    webEndpoint: webEndpointArg,
-    enforceGalleryView,
-    customerJoinId,
-    lang
-  } = {};
+  const { siteSlug, callRequestSlug } = useJoinSessionParams();
+
   const [loading, setIsLoading] = useState(true);
   const [loadingText, setLoadingText] = useState('');
   const [isFailover, setIsFailover] = useState<boolean>(false);
@@ -106,43 +101,54 @@ function App(props: AppProps) {
   const [mediaState, dispatch] = useReducer(mediaReducer, mediaShape);
   const [mediaStream, setMediaStream] = useState<MediaStream | null>(null);
   const [isSupportGalleryView, setIsSupportGalleryView] = useState<boolean>(true);
+  const [session, setSession] = useState({});
+
   const zmClient = useContext(ZoomContext);
-  let webEndpoint: any;
-  if (webEndpointArg) {
-    webEndpoint = webEndpointArg;
-  } else {
-    webEndpoint = window?.webEndpoint ?? 'zoom.us';
-  }
+
   const mediaContext = useMemo(() => ({ ...mediaState, mediaStream }), [mediaState, mediaStream]);
-  const galleryViewWithoutSAB = Number(enforceGalleryView) === 1 && !window.crossOriginIsolated;
+  const galleryViewWithoutSAB = !window.crossOriginIsolated;
 
   useEffect(() => {
-    const init = async () => {
-      await zmClient.init('en-US', 'Global', {
-        webEndpoint,
-        enforceMultipleVideos: galleryViewWithoutSAB,
-        enforceVirtualBackground: galleryViewWithoutSAB,
-        stayAwake: true
-      });
-      try {
-        setLoadingText('Joining the session...');
-        await zmClient.join(topic, signature, name, password).catch((e) => {
-          console.log(e);
+    if (callRequestSlug && siteSlug) {
+      AxiosClient.get(buildApiJoinSession(siteSlug, callRequestSlug))
+        .then((response) => setSession(response.data))
+        .catch((error) => {
+          window.alert(get(error, 'response.data.message', error.message));
+          window.location.assign(buildCallsDashboardPath(siteSlug));
         });
-        const stream = zmClient.getMediaStream();
-        setMediaStream(stream);
-        setIsSupportGalleryView(stream.isSupportMultipleVideos());
-        setIsLoading(false);
-      } catch (e: any) {
-        setIsLoading(false);
-        message.error(e.reason);
-      }
-    };
-    init();
-    return () => {
-      ZoomVideo.destroyClient();
-    };
-  }, [sdkKey, signature, zmClient, topic, name, password, webEndpoint, galleryViewWithoutSAB, customerJoinId]);
+    }
+  }, [callRequestSlug, siteSlug]);
+
+  useEffect(() => {
+    if (!isEmpty(session)) {
+      const init = async () => {
+        await zmClient.init('en-US', 'Global', {
+          enforceMultipleVideos: galleryViewWithoutSAB,
+          enforceVirtualBackground: galleryViewWithoutSAB,
+          stayAwake: true
+        });
+        try {
+          setLoadingText('Joining the session...');
+          await zmClient
+            .join(callRequestSlug, session.sessionToken, session.username, `cr_${session.id}`)
+            .catch((e) => {
+              message.error(e.reason);
+            });
+          const stream = zmClient.getMediaStream();
+          setMediaStream(stream);
+          setIsSupportGalleryView(stream.isSupportMultipleVideos());
+          setIsLoading(false);
+        } catch (e: any) {
+          setIsLoading(false);
+          message.error(e.reason);
+        }
+      };
+      init();
+      return () => {
+        ZoomVideo.destroyClient();
+      };
+    }
+  }, [zmClient, galleryViewWithoutSAB, session, callRequestSlug]);
 
   const onConnectionChange = useCallback(
     (payload) => {
@@ -165,8 +171,6 @@ function App(props: AppProps) {
         }
         window.zmClient = zmClient;
         window.mediaStream = zmClient.getMediaStream();
-
-        console.log('getSessionInfo', zmClient.getSessionInfo());
       } else if (payload.state === ConnectionState.Closed) {
         setStatus('closed');
         dispatch({ type: 'reset-media' });
@@ -194,16 +198,12 @@ function App(props: AppProps) {
     console.log('onAudioMerged', payload);
   }, []);
 
-  const onLeaveOrJoinSession = useCallback(async () => {
-    if (status === 'closed') {
-      setIsLoading(true);
-      await zmClient.join(topic, signature, name, password);
-      setIsLoading(false);
-    } else if (status === 'connected') {
+  const onLeaveSession = useCallback(async () => {
+    if (status === 'connected') {
       await zmClient.leave();
       message.warn('You have left the session.');
     }
-  }, [zmClient, status, topic, signature, name, password]);
+  }, [zmClient, status]);
 
   useEffect(() => {
     zmClient.on('connection-change', onConnectionChange);
@@ -217,18 +217,6 @@ function App(props: AppProps) {
       zmClient.off('merged-audio', onAudioMerged);
     };
   }, [zmClient, onConnectionChange, onMediaSDKChange, onDialoutChange, onAudioMerged]);
-
-  useEffect(() => {
-    const pathParams = matchPath(window.location.pathname, {
-      path: '/:siteSlug/sessions/:callRequestSlug/join',
-      exact: true,
-      strict: true
-    });
-
-    console.log(pathParams);
-
-    AxiosClient.get('/sites/:siteSlug/sessions/:callRequestSlug');
-  }, []);
 
   return (
     <div className="App">
